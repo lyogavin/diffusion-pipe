@@ -2,7 +2,7 @@
 output_dir = '/root/data/diffusion_pipe_training_runs/hunyuan_video_test'
 
 # Dataset config file.
-dataset = 'examples/godmodai_hunyuan_dataset.toml'
+dataset = 'examples/godmodai_hunyuan_dataset_spinkick.toml'
 # You can have separate eval datasets. Give them a name for Tensorboard metrics.
 # eval_datasets = [
 #     {name = 'something', config = 'path/to/eval_dataset.toml'},
