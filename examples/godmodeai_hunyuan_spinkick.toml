@@ -156,4 +156,4 @@ eps = 1e-8
 enable_wandb = true
 wandb_api_key = ''
 wandb_tracker_name = 'godmodai_hunyuan'
-wandb_run_name = 'run_all'
+wandb_run_name = 'spinkick'
