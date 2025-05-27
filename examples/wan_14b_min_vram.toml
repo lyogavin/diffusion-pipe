@@ -32,7 +32,7 @@ blocks_to_swap = 32
 
 [model]
 type = 'wan'
-ckpt_path = '/data2/imagegen_models/Wan2.1-T2V-14B'
+ckpt_path = '/root/imagegen_models/Wan2.1-T2V-14B'
 dtype = 'bfloat16'
 transformer_dtype = 'float8'
 timestep_sample_method = 'logit_normal'
@@ -48,3 +48,10 @@ lr = 2e-5
 betas = [0.9, 0.99]
 weight_decay = 0.01
 stabilize = false
+
+[monitoring]
+# Set to true and fill in these fields to enable wandb
+enable_wandb = true
+wandb_api_key = ''
+wandb_tracker_name = 'godmodai_wan'
+wandb_run_name = 'spinkick_selected'
