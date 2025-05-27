@@ -34,7 +34,7 @@ blocks_to_swap = 32
 
 [model]
 type = 'wan'
-ckpt_path = '/data2/imagegen_models/Wan2.1-T2V-14B'
+ckpt_path = '/root/imagegen_models/Wan2.1-T2V-14B'
 dtype = 'bfloat16'
 transformer_dtype = 'float8'
 timestep_sample_method = 'logit_normal'
