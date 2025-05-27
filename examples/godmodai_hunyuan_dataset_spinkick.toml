@@ -7,7 +7,7 @@
 # file for how you can do that.
 #resolutions = [512]
 
-resolutions = [[1152, 720]]
+resolutions = [[512, 320]]
 
 
 # You can give resolutions as (width, height) pairs also. This doesn't do anything different, it's just
