@@ -50,3 +50,12 @@ lr = 2e-5
 betas = [0.9, 0.99]
 weight_decay = 0.01
 stabilize = false
+
+
+[monitoring]
+# Set to true and fill in these fields to enable wandb
+enable_wandb = true
+wandb_api_key = ''
+wandb_tracker_name = 'godmodai_wan'
+wandb_run_name = 'spinkick_gif_mp4'
+
