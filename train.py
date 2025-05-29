@@ -457,11 +457,11 @@ if __name__ == '__main__':
     # WandB logging
     wandb_enable = config.get('monitoring', {}).get('enable_wandb', False)
     if wandb_enable:
-        wandb_api_key     = config['monitoring']['wandb_api_key']
+        #wandb_api_key     = config['monitoring']['wandb_api_key']
         wandb_tracker     = config['monitoring']['wandb_tracker_name']
         wandb_run_name    = config['monitoring']['wandb_run_name']
         logging_dir       = run_dir
-        wandb.login(key=wandb_api_key)
+        #wandb.login(key=wandb_api_key)
         wandb.init(
             project=wandb_tracker,
             name=wandb_run_name,

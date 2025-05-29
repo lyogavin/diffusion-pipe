@@ -1,0 +1,39 @@
+# Example OpenBor Character Configuration
+# This is a sample config file showing the supported animation format
+
+anim idle
+    offset 100 200
+    delay 10
+    frame idle_0.png
+    frame idle_1.png
+    frame idle_2.png
+    frame idle_1.png
+
+anim walk
+    offset 98 198
+    delay 8
+    frame walk_0.png
+    frame walk_1.png
+    frame walk_2.png
+    frame walk_3.png
+
+anim attack
+    offset 102 189
+    delay 6
+    frame attack_0.png
+    delay 15
+    frame attack_1.png
+    frame attack_2.png
+    delay 9
+    frame attack_3.png
+
+anim jump
+    offset 100 200
+    delay 12
+    frame jump_0.png
+    frame jump_1.png
+    delay 20
+    frame jump_2.png
+    delay 8
+    frame jump_1.png
+    frame jump_0.png 
