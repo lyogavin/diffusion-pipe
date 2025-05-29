@@ -115,7 +115,7 @@ class OpenBorParser:
 class AnimationGenerator:
     """Generates MP4 videos from OpenBor animations."""
     
-    def __init__(self, config_path: str, target_offset_ratio: Tuple[float, float] = (0.5, 0.8), fps: int = 16, canvas_color: str = "#000000", scale_ratio: float = 1.0, repeat_fill: Optional[int] = None):
+    def __init__(self, config_path: str, target_offset_ratio: Tuple[float, float] = (0.5, 0.8), fps: int = 16, canvas_color: str = "#000000", scale_ratio: float = 1.0, repeat_fill: Optional[int] = None, delay_cap: Optional[int] = None):
         self.config_path = Path(config_path)
         self.config_dir = self.config_path.parent
         self.target_offset_ratio = target_offset_ratio  # Now using ratios (0.0 to 1.0)
@@ -123,6 +123,7 @@ class AnimationGenerator:
         self.canvas_color = self.hex_to_bgr(canvas_color)  # Convert hex to BGR for OpenCV
         self.scale_ratio = scale_ratio  # Scale factor for output video dimensions
         self.repeat_fill = repeat_fill  # Target frame count for repeat filling
+        self.delay_cap = delay_cap  # Maximum delay value in centiseconds
         self.parser = OpenBorParser(config_path)
         self.animations = self.parser.parse()
         self.generated_videos = []
@@ -372,6 +373,9 @@ class AnimationGenerator:
         # Process animation frames
         for frame_path, delay, offset in animation.frames:
             img = self.load_and_process_image(frame_path, offset)
+            # Apply delay cap if specified
+            if self.delay_cap is not None:
+                delay = min(delay, self.delay_cap)
             # Convert delay from centiseconds to frame count
             frame_count = max(1, int(delay * self.fps / 100))
             video_frames.append((img, frame_count))
@@ -627,15 +631,29 @@ echo "Video created: {animation.name}.mp4"
                 print("Falling back to image sequence.")
                 return self.generate_image_sequence(animation, video_frames, max_width, max_height)
     
-    def generate_all_animations(self) -> str:
+    def generate_all_animations(self, filter_animation: Optional[str] = None) -> Optional[str]:
         """Generate videos for all animations and create a JSON summary."""
         if not self.animations:
             print("No animations found in config file")
             return None
         
+        # Filter animations if specified
+        animations_to_process = {}
+        if filter_animation:
+            if filter_animation in self.animations:
+                animations_to_process[filter_animation] = self.animations[filter_animation]
+                print(f"Processing only animation: {filter_animation}")
+            else:
+                print(f"Error: Animation '{filter_animation}' not found in config file")
+                available_animations = list(self.animations.keys())
+                print(f"Available animations: {', '.join(available_animations)}")
+                return None
+        else:
+            animations_to_process = self.animations
+        
         results = []
         
-        for anim_name, animation in self.animations.items():
+        for anim_name, animation in animations_to_process.items():
             video_filename, frame_count = self.generate_animation_video(animation)
             if video_filename:
                 results.append({
@@ -644,15 +662,19 @@ echo "Video created: {animation.name}.mp4"
                     "frames": frame_count
                 })
         
-        # Generate JSON summary
-        json_filename = f"{self.config_path.stem}_animations.json"
-        json_path = self.config_dir / json_filename
-        
-        with open(json_path, 'w', encoding='utf-8') as f:
-            json.dump(results, f, indent=2)
-        
-        print(f"Generated JSON summary: {json_filename}")
-        return json_filename
+        # Generate JSON summary only if not filtering
+        if not filter_animation:
+            json_filename = f"{self.config_path.stem}_animations.json"
+            json_path = self.config_dir / json_filename
+            
+            with open(json_path, 'w', encoding='utf-8') as f:
+                json.dump(results, f, indent=2)
+            
+            print(f"Generated JSON summary: {json_filename}")
+            return json_filename
+        else:
+            print("Skipping JSON summary generation (filter mode)")
+            return None
 
 
 def main():
@@ -665,6 +687,8 @@ def main():
     parser.add_argument('--canvas-color', type=str, default='#000000', help='Canvas background color in hex format (default: #000000)')
     parser.add_argument('--scale-ratio', type=float, default=1.0, help='Scale ratio for output video dimensions (default: 1.0)')
     parser.add_argument('--repeat-fill', type=int, help='Target frame count for repeat filling (respects loop setting)')
+    parser.add_argument('--filter-animation', type=str, help='Filter to process only a specific animation')
+    parser.add_argument('--delay-cap', type=int, help='Maximum delay value in centiseconds')
     
     args = parser.parse_args()
     
@@ -686,6 +710,11 @@ def main():
         print(f"Error: scale-ratio must be a positive number, got {args.scale_ratio}")
         sys.exit(1)
     
+    # Validate delay cap
+    if args.delay_cap is not None and args.delay_cap <= 0:
+        print(f"Error: delay-cap must be a positive number, got {args.delay_cap}")
+        sys.exit(1)
+    
     # Create animation generator
     generator = AnimationGenerator(
         config_path=args.config_file,
@@ -693,7 +722,8 @@ def main():
         fps=args.fps,
         canvas_color=args.canvas_color,
         scale_ratio=args.scale_ratio,
-        repeat_fill=args.repeat_fill
+        repeat_fill=args.repeat_fill,
+        delay_cap=args.delay_cap
     )
     
     print(f"Using target offset ratio: ({args.offset_x_ratio}, {args.offset_y_ratio})")
@@ -701,9 +731,13 @@ def main():
     print(f"Using scale ratio: {args.scale_ratio}")
     if args.repeat_fill:
         print(f"Using repeat fill: {args.repeat_fill} frames")
+    if args.filter_animation:
+        print(f"Filtering animation: {args.filter_animation}")
+    if args.delay_cap:
+        print(f"Using delay cap: {args.delay_cap} centiseconds")
     
     # Generate all animations
-    json_file = generator.generate_all_animations()
+    json_file = generator.generate_all_animations(args.filter_animation)
     
     if json_file:
         print(f"\nAnimation generation completed successfully!")
