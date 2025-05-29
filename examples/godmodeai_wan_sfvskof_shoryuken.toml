@@ -57,5 +57,5 @@ stabilize = false
 enable_wandb = true
 wandb_api_key = ''
 wandb_tracker_name = 'godmodai_wan'
-wandb_run_name = 'aof_walk'
+wandb_run_name = 'aof_shoryuken'
 
