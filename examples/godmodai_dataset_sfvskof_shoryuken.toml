@@ -37,7 +37,7 @@ num_ar_buckets = 7
 # is still greater than or equal to the frame bucket length.
 # But videos are never assigned to the image frame bucket (1); if the video is very short it would just be dropped.
 # change default 33 -> 16 for gaming
-frame_buckets = [1, 16]
+frame_buckets = [1, 24]
 # If you have >24GB VRAM, or multiple GPUs and use pipeline parallelism, or lower the spatial resolution, you could maybe train with longer frame buckets
 # frame_buckets = [1, 33, 65, 97]
 
