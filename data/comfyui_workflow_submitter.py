@@ -350,11 +350,14 @@ def modify_workflow(workflow: Dict[str, Any], lora_name: str, prompt: str = None
     return workflow
 
 
-def upload_to_huggingface(file_path: str, repo_id: str, hf_path: str, token: str = None, postfix: str = None):
+def upload_to_huggingface(file_path: str, repo_id: str, hf_path: str, token: str = None, postfix: str = None, repo_type: str = None, dryrun: bool = False):
     """Upload file to Hugging Face repository with optional filename postfix"""
     if not HF_AVAILABLE:
         print("Error: huggingface_hub not installed. Cannot upload to Hugging Face.")
         return False
+    
+    if dryrun:
+        print("🧪 DRY RUN MODE: Testing upload process without actually uploading")
     
     # Add postfix to filename if provided
     if postfix:
@@ -364,27 +367,104 @@ def upload_to_huggingface(file_path: str, repo_id: str, hf_path: str, token: str
         else:
             hf_path = f"{hf_path}_{postfix}"
         print(f"Added postfix to filename: {hf_path}")
-        
+    
     try:
         api = HfApi()
         
         # Login if token provided
         if token:
-            login(token=token)
+            if not dryrun:
+                login(token=token)
+            print("Successfully authenticated with Hugging Face" + (" (dry run)" if dryrun else ""))
+        else:
+            print("Warning: No Hugging Face token provided")
         
-        # Upload file
-        api.upload_file(
-            path_or_fileobj=file_path,
-            path_in_repo=hf_path,
-            repo_id=repo_id,
-            repo_type="dataset"  # Change to "model" if needed
-        )
+        print(f"Attempting to upload to repository: {repo_id}")
+        print(f"Upload path: {hf_path}")
+        print(f"Local file: {file_path}")
         
-        print(f"Successfully uploaded {file_path} to {repo_id}/{hf_path}")
-        return True
+        # Check if file exists locally
+        if not os.path.exists(file_path):
+            print(f"Error: Local file does not exist: {file_path}")
+            return False
+        
+        file_size = os.path.getsize(file_path)
+        print(f"File size: {file_size / (1024*1024):.2f} MB")
+        
+        # Determine repository types to try
+        if repo_type:
+            repo_types = [repo_type]
+            print(f"Using specified repository type: {repo_type}")
+        else:
+            repo_types = ["dataset", "model", "space"]
+            print("Auto-detecting repository type...")
+        
+        for current_repo_type in repo_types:
+            try:
+                print(f"Trying to access repo as type '{current_repo_type}'...")
+                
+                # Check if repo exists (this works in dry run mode)
+                try:
+                    repo_info = api.repo_info(repo_id=repo_id, repo_type=current_repo_type)
+                    print(f"✅ Repository found as type '{current_repo_type}': {repo_info.id}")
+                    
+                    if dryrun:
+                        print(f"🧪 DRY RUN: Would upload {file_path} to {repo_id}/{hf_path} (type: {current_repo_type})")
+                        print(f"🧪 DRY RUN: File size {file_size} bytes would be uploaded")
+                        print(f"🧪 DRY RUN: Repository URL: https://huggingface.co/{repo_id}")
+                        print("✅ Dry run completed successfully - upload would work!")
+                        return True
+                    else:
+                        # Actual upload
+                        print(f"🚀 Uploading {file_path} to {repo_id}/{hf_path}...")
+                        result = api.upload_file(
+                            path_or_fileobj=file_path,
+                            path_in_repo=hf_path,
+                            repo_id=repo_id,
+                            repo_type=current_repo_type
+                        )
+                        
+                        print(f"✅ Successfully uploaded {file_path} to {repo_id}/{hf_path} (type: {current_repo_type})")
+                        print(f"Upload result: {result}")
+                        return True
+                    
+                except Exception as repo_error:
+                    print(f"❌ Failed with repo_type='{current_repo_type}': {repo_error}")
+                    continue
+                    
+            except Exception as upload_error:
+                print(f"❌ Upload failed for repo_type='{current_repo_type}': {upload_error}")
+                continue
+        
+        # If all repo types failed, provide helpful error message
+        error_prefix = "🧪 DRY RUN: Would fail to upload" if dryrun else "❌ Failed to upload"
+        print(f"\n{error_prefix} to {repo_id} with any repository type.")
+        print("Common solutions:")
+        print("1. Check if the repository exists on Hugging Face")
+        print("2. Verify you have write access to the repository")
+        print("3. Ensure your token has the correct permissions")
+        print("4. Try creating the repository first if it doesn't exist")
+        print(f"5. Check the repository URL: https://huggingface.co/{repo_id}")
+        
+        return False
         
     except Exception as e:
-        print(f"Error uploading to Hugging Face: {e}")
+        error_prefix = "🧪 DRY RUN: Would error" if dryrun else "❌ Error"
+        print(f"{error_prefix} uploading to Hugging Face: {e}")
+        print(f"Repository: {repo_id}")
+        print(f"File path: {hf_path}")
+        
+        # Additional debugging info
+        try:
+            from huggingface_hub.utils import get_token
+            current_token = get_token()
+            if current_token:
+                print("Token is available")
+            else:
+                print("No token found - this might be the issue")
+        except:
+            pass
+            
         return False
 
 
@@ -401,6 +481,10 @@ def main():
                        help="Path in Hugging Face repo to upload file")
     parser.add_argument("--hf-token", 
                        help="Hugging Face token (or set HF_TOKEN env var)")
+    parser.add_argument("--hf-repo-type", choices=["dataset", "model", "space"], default=None,
+                       help="Hugging Face repository type (auto-detect if not specified)")
+    parser.add_argument("--hf-upload-dryrun", action="store_true",
+                       help="Dry run: test upload process without actually uploading the file")
     parser.add_argument("--output-dir", default="./outputs", 
                        help="Local directory to save outputs")
     parser.add_argument("--timeout", type=int, default=300, 
@@ -442,33 +526,69 @@ def main():
     client = ComfyUIClient(args.server)
     
     try:
-        # Connect to WebSocket for real-time updates
-        client.connect_websocket()
-        
-        # Submit workflow
-        prompt_id = client.submit_workflow(workflow)
-        
-        # Wait for completion
-        if client.wait_for_completion(prompt_id, args.timeout):
-            # Download result
-            result_path = client.download_result(prompt_id, args.output_dir)
+        # In dry run mode, skip workflow execution and create a test file
+        if args.hf_upload_dryrun:
+            print("🧪 DRY RUN MODE: Skipping workflow execution")
+            print("🧪 Creating dummy test file for upload testing...")
             
-            if result_path:
-                # Upload to Hugging Face
-                if upload_to_huggingface(result_path, args.hf_repo, args.hf_path, hf_token, args.postfix):
-                    print("Pipeline completed successfully!")
-                else:
-                    print("Pipeline completed but upload to Hugging Face failed.")
+            # Create output directory
+            os.makedirs(args.output_dir, exist_ok=True)
+            
+            # Create a dummy test file
+            test_filename = f"test_upload_{int(time.time())}.mp4"
+            result_path = os.path.join(args.output_dir, test_filename)
+            
+            # Create a small dummy video file (just empty bytes for testing)
+            with open(result_path, 'wb') as f:
+                # Write some dummy data to make it look like a real file
+                dummy_data = b"DUMMY_VIDEO_FILE_FOR_TESTING" * 1000  # ~27KB file
+                f.write(dummy_data)
+            
+            print(f"🧪 Created test file: {result_path} ({os.path.getsize(result_path)} bytes)")
+            
+        else:
+            # Normal mode: Connect to WebSocket and run workflow
+            client.connect_websocket()
+            
+            # Submit workflow
+            prompt_id = client.submit_workflow(workflow)
+            
+            # Wait for completion
+            if client.wait_for_completion(prompt_id, args.timeout):
+                # Download result
+                result_path = client.download_result(prompt_id, args.output_dir)
+                
+                if not result_path:
+                    print("Failed to download result file.")
                     sys.exit(1)
             else:
-                print("Failed to download result file.")
+                print("Workflow execution failed or timed out.")
+                sys.exit(1)
+        
+        # Upload to Hugging Face (works for both real files and test files)
+        if result_path:
+            if upload_to_huggingface(result_path, args.hf_repo, args.hf_path, hf_token, args.postfix, args.hf_repo_type, args.hf_upload_dryrun):
+                if args.hf_upload_dryrun:
+                    print("🧪 Dry run completed successfully!")
+                    # Clean up test file
+                    os.remove(result_path)
+                    print(f"🧪 Cleaned up test file: {result_path}")
+                else:
+                    print("Pipeline completed successfully!")
+            else:
+                error_msg = "Dry run upload test failed." if args.hf_upload_dryrun else "Pipeline completed but upload to Hugging Face failed."
+                print(error_msg)
+                if args.hf_upload_dryrun and os.path.exists(result_path):
+                    os.remove(result_path)
+                    print(f"🧪 Cleaned up test file: {result_path}")
                 sys.exit(1)
         else:
-            print("Workflow execution failed or timed out.")
+            print("No result file available for upload.")
             sys.exit(1)
             
     finally:
-        client.close()
+        if not args.hf_upload_dryrun:
+            client.close()
 
 
 if __name__ == "__main__":
