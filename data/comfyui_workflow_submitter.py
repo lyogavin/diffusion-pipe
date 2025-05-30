@@ -350,14 +350,14 @@ def modify_workflow(workflow: Dict[str, Any], lora_name: str, prompt: str = None
     return workflow
 
 
-def upload_to_huggingface(file_path: str, repo_id: str, hf_path: str, token: str = None, postfix: str = None, repo_type: str = None, dryrun: bool = False):
+def upload_to_huggingface(file_path: str, repo_id: str, hf_path: str, token: str = None, postfix: str = None, repo_type: str = None, dryrun: bool = False, keep_dryrun_file: bool = False):
     """Upload file to Hugging Face repository with optional filename postfix"""
     if not HF_AVAILABLE:
         print("Error: huggingface_hub not installed. Cannot upload to Hugging Face.")
         return False
     
     if dryrun:
-        print("🧪 DRY RUN MODE: Testing upload process without actually uploading")
+        print("🧪 DRY RUN MODE: Testing upload process with real test file upload")
     
     # Add postfix to filename if provided
     if postfix:
@@ -375,6 +375,8 @@ def upload_to_huggingface(file_path: str, repo_id: str, hf_path: str, token: str
         if token:
             if not dryrun:
                 login(token=token)
+            else:
+                login(token=token)  # Need to login for dry run uploads too
             print("Successfully authenticated with Hugging Face" + (" (dry run)" if dryrun else ""))
         else:
             print("Warning: No Hugging Face token provided")
@@ -409,10 +411,38 @@ def upload_to_huggingface(file_path: str, repo_id: str, hf_path: str, token: str
                     print(f"✅ Repository found as type '{current_repo_type}': {repo_info.id}")
                     
                     if dryrun:
-                        print(f"🧪 DRY RUN: Would upload {file_path} to {repo_id}/{hf_path} (type: {current_repo_type})")
-                        print(f"🧪 DRY RUN: File size {file_size} bytes would be uploaded")
+                        print(f"🧪 DRY RUN: Uploading test file {file_path} to {repo_id}/{hf_path} (type: {current_repo_type})")
+                        print(f"🧪 DRY RUN: File size {file_size} bytes")
                         print(f"🧪 DRY RUN: Repository URL: https://huggingface.co/{repo_id}")
-                        print("✅ Dry run completed successfully - upload would work!")
+                        
+                        # Actually upload the test file in dry run mode
+                        result = api.upload_file(
+                            path_or_fileobj=file_path,
+                            path_in_repo=hf_path,
+                            repo_id=repo_id,
+                            repo_type=current_repo_type
+                        )
+                        
+                        print(f"✅ Dry run upload completed successfully!")
+                        print(f"🧪 Test file uploaded to: https://huggingface.co/{repo_id}/blob/main/{hf_path}")
+                        print(f"Upload result: {result}")
+                        
+                        # Delete the test file from Hugging Face if not keeping it
+                        if not keep_dryrun_file:
+                            try:
+                                print(f"🧪 Deleting test file from Hugging Face...")
+                                api.delete_file(
+                                    path_in_repo=hf_path,
+                                    repo_id=repo_id,
+                                    repo_type=current_repo_type
+                                )
+                                print(f"🧪 Test file deleted from Hugging Face")
+                            except Exception as delete_error:
+                                print(f"⚠️ Warning: Could not delete test file from HF: {delete_error}")
+                                print(f"🧪 Test file remains at: https://huggingface.co/{repo_id}/blob/main/{hf_path}")
+                        else:
+                            print(f"🧪 Test file kept at: https://huggingface.co/{repo_id}/blob/main/{hf_path}")
+                        
                         return True
                     else:
                         # Actual upload
@@ -437,7 +467,7 @@ def upload_to_huggingface(file_path: str, repo_id: str, hf_path: str, token: str
                 continue
         
         # If all repo types failed, provide helpful error message
-        error_prefix = "🧪 DRY RUN: Would fail to upload" if dryrun else "❌ Failed to upload"
+        error_prefix = "🧪 DRY RUN: Failed to upload test file" if dryrun else "❌ Failed to upload"
         print(f"\n{error_prefix} to {repo_id} with any repository type.")
         print("Common solutions:")
         print("1. Check if the repository exists on Hugging Face")
@@ -449,7 +479,7 @@ def upload_to_huggingface(file_path: str, repo_id: str, hf_path: str, token: str
         return False
         
     except Exception as e:
-        error_prefix = "🧪 DRY RUN: Would error" if dryrun else "❌ Error"
+        error_prefix = "🧪 DRY RUN: Error uploading test file" if dryrun else "❌ Error"
         print(f"{error_prefix} uploading to Hugging Face: {e}")
         print(f"Repository: {repo_id}")
         print(f"File path: {hf_path}")
@@ -484,7 +514,9 @@ def main():
     parser.add_argument("--hf-repo-type", choices=["dataset", "model", "space"], default=None,
                        help="Hugging Face repository type (auto-detect if not specified)")
     parser.add_argument("--hf-upload-dryrun", action="store_true",
-                       help="Dry run: test upload process without actually uploading the file")
+                       help="Dry run: test upload process by uploading a test file")
+    parser.add_argument("--hf-dryrun-keep-file", action="store_true",
+                       help="Keep the test file on Hugging Face after dry run (default: delete it)")
     parser.add_argument("--output-dir", default="./outputs", 
                        help="Local directory to save outputs")
     parser.add_argument("--timeout", type=int, default=300, 
@@ -567,20 +599,22 @@ def main():
         
         # Upload to Hugging Face (works for both real files and test files)
         if result_path:
-            if upload_to_huggingface(result_path, args.hf_repo, args.hf_path, hf_token, args.postfix, args.hf_repo_type, args.hf_upload_dryrun):
+            if upload_to_huggingface(result_path, args.hf_repo, args.hf_path, hf_token, args.postfix, args.hf_repo_type, args.hf_upload_dryrun, args.hf_dryrun_keep_file):
                 if args.hf_upload_dryrun:
                     print("🧪 Dry run completed successfully!")
                     # Clean up test file
-                    os.remove(result_path)
-                    print(f"🧪 Cleaned up test file: {result_path}")
+                    if not args.hf_dryrun_keep_file:
+                        os.remove(result_path)
+                        print(f"🧪 Cleaned up test file: {result_path}")
                 else:
                     print("Pipeline completed successfully!")
             else:
                 error_msg = "Dry run upload test failed." if args.hf_upload_dryrun else "Pipeline completed but upload to Hugging Face failed."
                 print(error_msg)
                 if args.hf_upload_dryrun and os.path.exists(result_path):
-                    os.remove(result_path)
-                    print(f"🧪 Cleaned up test file: {result_path}")
+                    if not args.hf_dryrun_keep_file:
+                        os.remove(result_path)
+                        print(f"🧪 Cleaned up test file: {result_path}")
                 sys.exit(1)
         else:
             print("No result file available for upload.")
