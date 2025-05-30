@@ -320,12 +320,23 @@ def validate_workflow(workflow: Dict[str, Any]) -> bool:
         if not prompt_input:
             print("Warning: Node 16 (Text Encode) has empty positive_prompt")
     
+    if "37" in workflow:
+        width = workflow["37"]["inputs"].get("width")
+        height = workflow["37"]["inputs"].get("height")
+        num_frames = workflow["37"]["inputs"].get("num_frames")
+        if width:
+            print(f"Info: Node 37 width: {width}")
+        if height:
+            print(f"Info: Node 37 height: {height}")
+        if num_frames:
+            print(f"Info: Node 37 num_frames: {num_frames}")
+    
     print("Workflow validation completed")
     return True
 
 
-def modify_workflow(workflow: Dict[str, Any], lora_name: str, prompt: str = None) -> Dict[str, Any]:
-    """Modify the LoRA name in node #56 and optionally the prompt in node #16 of the workflow"""
+def modify_workflow(workflow: Dict[str, Any], lora_name: str, prompt: str = None, width: int = None, height: int = None, num_frames: int = None) -> Dict[str, Any]:
+    """Modify the LoRA name in node #56, optionally the prompt in node #16, and video dimensions in node #37 of the workflow"""
     # Modify LoRA in node #56
     if "56" in workflow:
         if "inputs" in workflow["56"]:
@@ -346,6 +357,24 @@ def modify_workflow(workflow: Dict[str, Any], lora_name: str, prompt: str = None
                 print("Warning: No 'inputs' found in node #16")
         else:
             print("Warning: Node #16 not found in workflow")
+    
+    # Modify video dimensions in node #37 if provided
+    if width is not None or height is not None or num_frames is not None:
+        if "37" in workflow:
+            if "inputs" in workflow["37"]:
+                if width is not None:
+                    workflow["37"]["inputs"]["width"] = width
+                    print(f"Updated width in node #37 to: {width}")
+                if height is not None:
+                    workflow["37"]["inputs"]["height"] = height
+                    print(f"Updated height in node #37 to: {height}")
+                if num_frames is not None:
+                    workflow["37"]["inputs"]["num_frames"] = num_frames
+                    print(f"Updated num_frames in node #37 to: {num_frames}")
+            else:
+                print("Warning: No 'inputs' found in node #37")
+        else:
+            print("Warning: Node #37 not found in workflow")
     
     return workflow
 
@@ -527,6 +556,12 @@ def main():
                        help="Postfix to add to the uploaded filename")
     parser.add_argument("--debug", action="store_true",
                        help="Save the final workflow JSON for debugging")
+    parser.add_argument("--width", type=int, default=None,
+                       help="Video width in pixels (node #37)")
+    parser.add_argument("--height", type=int, default=None,
+                       help="Video height in pixels (node #37)")
+    parser.add_argument("--num-frames", type=int, default=None,
+                       help="Number of video frames (node #37)")
     
     args = parser.parse_args()
     
@@ -540,7 +575,7 @@ def main():
     
     # Load and modify workflow
     workflow = load_workflow(args.workflow)
-    workflow = modify_workflow(workflow, args.lora, prompt)
+    workflow = modify_workflow(workflow, args.lora, prompt, args.width, args.height, args.num_frames)
     
     # Validate workflow before submitting
     if not validate_workflow(workflow):
