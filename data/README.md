@@ -7,7 +7,7 @@ This Python script submits ComfyUI workflows to a local ComfyUI instance, polls 
 - ✅ Submits ComfyUI workflows via REST API
 - ✅ Real-time monitoring via WebSocket connection
 - ✅ Automatic LoRA parameter modification in node #56
-- ✅ Custom prompt modification in node #16
+- ✅ Custom prompt modification in node #16 via text file
 - ✅ Downloads completed video results
 - ✅ Uploads results to Hugging Face repositories with custom filename postfix
 - ✅ Comprehensive error handling and logging
@@ -37,17 +37,23 @@ python comfyui_workflow_submitter.py \
   --hf-path "outputs/my_video.mp4"
 ```
 
-### Full Example with Custom Prompt and Postfix
+### Full Example with Custom Prompt File and Postfix
 
+First, create a prompt file:
+```bash
+echo "A majestic dragon soaring through clouds above a mystical mountain range, cinematic lighting, epic fantasy style, 8k resolution, highly detailed" > my_prompt.txt
+```
+
+Then run the script:
 ```bash
 python comfyui_workflow_submitter.py \
   --lora "epoch280/my_trained_lora.safetensors" \
-  --prompt "A beautiful sunset over mountains, cinematic style, 4k quality" \
+  --prompt-file "my_prompt.txt" \
   --postfix "experiment_001" \
   --workflow "wand_trained_lora_eval_infer-api.json" \
   --server "localhost:8081" \
   --hf-repo "myusername/video-results" \
-  --hf-path "outputs/sunset_video.mp4" \
+  --hf-path "outputs/dragon_video.mp4" \
   --hf-token "hf_xxxxxxxxxxxx" \
   --output-dir "./local_outputs" \
   --timeout 600
@@ -68,18 +74,39 @@ python comfyui_workflow_submitter.py \
 - `--hf-token`: Hugging Face token (can also use `HF_TOKEN` env var)
 - `--output-dir`: Local directory for downloads (default: `./outputs`)
 - `--timeout`: Timeout in seconds for workflow completion (default: 300)
-- `--prompt`: Custom positive prompt to use in the workflow (replaces prompt in node #16)
+- `--prompt-file`: Path to text file containing the custom prompt (replaces prompt in node #16)
 - `--postfix`: Postfix to add to the uploaded filename (e.g., `video.mp4` becomes `video_experiment001.mp4`)
+
+## Prompt Files
+
+You can create prompt files to easily manage complex prompts:
+
+### Example prompt file (`prompts/fantasy_scene.txt`):
+```
+A magnificent castle perched on a floating island in the sky, 
+surrounded by swirling clouds and magical aurora lights, 
+cinematic composition, fantasy art style, highly detailed, 
+dramatic lighting, 4k resolution
+```
+
+### Example prompt file (`prompts/cyberpunk_city.txt`):
+```
+Futuristic cyberpunk cityscape at night with neon lights reflecting on wet streets,
+flying cars, holographic advertisements, rain effects,
+noir atmosphere, cinematic wide shot, high contrast lighting,
+ultra-detailed, 8k resolution
+```
 
 ## Workflow Process
 
 1. **Load Workflow**: Reads the JSON workflow file
 2. **Modify LoRA**: Updates node #56 with the specified LoRA name
-3. **Modify Prompt**: (Optional) Updates node #16 with custom positive prompt
-4. **Submit**: Sends the workflow to ComfyUI via REST API
-5. **Monitor**: Uses WebSocket to monitor execution progress
-6. **Download**: Downloads the generated video file
-7. **Upload**: Uploads the result to the specified Hugging Face repository with optional filename postfix
+3. **Load Prompt**: (Optional) Loads custom prompt from text file
+4. **Modify Prompt**: (Optional) Updates node #16 with loaded prompt
+5. **Submit**: Sends the workflow to ComfyUI via REST API
+6. **Monitor**: Uses WebSocket to monitor execution progress
+7. **Download**: Downloads the generated video file
+8. **Upload**: Uploads the result to the specified Hugging Face repository with optional filename postfix
 
 ## ComfyUI Workflow Structure
 
@@ -98,6 +125,7 @@ The script handles various error conditions:
 - File download failures
 - Hugging Face upload problems
 - WebSocket connection issues
+- Prompt file loading errors
 
 ## Environment Variables
 
@@ -106,15 +134,16 @@ The script handles various error conditions:
 ## Example Output
 
 ```
+Loaded prompt from file: my_prompt.txt
 Updated LoRA in node #56 to: my_custom_lora.safetensors
-Updated positive prompt in node #16 to: A beautiful sunset over mountains, cinematic style, 4k quality
+Updated positive prompt in node #16 to: A majestic dragon soaring through clouds above a mystical mountain range, cinematic lighting, epic fant...
 WebSocket connection opened
 Workflow submitted successfully. Prompt ID: abc123-def456-789
 Waiting for completion of prompt abc123-def456-789...
 Prompt abc123-def456-789 completed successfully!
 Downloaded result to: ./outputs/WanVideo2_1_T2V_00001.mp4
-Added postfix to filename: outputs/sunset_video_experiment_001.mp4
-Successfully uploaded ./outputs/WanVideo2_1_T2V_00001.mp4 to username/repo/outputs/sunset_video_experiment_001.mp4
+Added postfix to filename: outputs/dragon_video_experiment_001.mp4
+Successfully uploaded ./outputs/WanVideo2_1_T2V_00001.mp4 to username/repo/outputs/dragon_video_experiment_001.mp4
 Pipeline completed successfully!
 ```
 
@@ -134,6 +163,11 @@ Pipeline completed successfully!
 - Check that all required models are available in ComfyUI
 - Verify LoRA files exist in the specified path
 - Monitor ComfyUI logs for detailed error messages
+
+### Prompt File Issues
+- Ensure the prompt file exists and is readable
+- Check file encoding (should be UTF-8)
+- Verify the prompt text is not empty
 
 ## Dependencies
 

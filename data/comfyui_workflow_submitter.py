@@ -195,6 +195,24 @@ def load_workflow(workflow_path: str) -> Dict[str, Any]:
         sys.exit(1)
 
 
+def load_prompt_from_file(prompt_file_path: str) -> str:
+    """Load prompt content from text file"""
+    try:
+        with open(prompt_file_path, 'r', encoding='utf-8') as f:
+            prompt = f.read().strip()
+        print(f"Loaded prompt from file: {prompt_file_path}")
+        return prompt
+    except FileNotFoundError:
+        print(f"Prompt file not found: {prompt_file_path}")
+        sys.exit(1)
+    except UnicodeDecodeError as e:
+        print(f"Error reading prompt file (encoding issue): {e}")
+        sys.exit(1)
+    except Exception as e:
+        print(f"Error loading prompt file: {e}")
+        sys.exit(1)
+
+
 def modify_workflow(workflow: Dict[str, Any], lora_name: str, prompt: str = None) -> Dict[str, Any]:
     """Modify the LoRA name in node #56 and optionally the prompt in node #16 of the workflow"""
     # Modify LoRA in node #56
@@ -276,8 +294,8 @@ def main():
                        help="Local directory to save outputs")
     parser.add_argument("--timeout", type=int, default=300, 
                        help="Timeout in seconds for workflow completion")
-    parser.add_argument("--prompt", 
-                       help="Custom positive prompt to use in the workflow (node #16)")
+    parser.add_argument("--prompt-file", 
+                       help="Path to text file containing the custom prompt to use in the workflow (node #16)")
     parser.add_argument("--postfix", 
                        help="Postfix to add to the uploaded filename")
     
@@ -286,9 +304,14 @@ def main():
     # Get HF token from args or environment
     hf_token = args.hf_token or os.getenv('HF_TOKEN')
     
+    # Load prompt from file if provided
+    prompt = None
+    if args.prompt_file:
+        prompt = load_prompt_from_file(args.prompt_file)
+    
     # Load and modify workflow
     workflow = load_workflow(args.workflow)
-    workflow = modify_workflow(workflow, args.lora, args.prompt)
+    workflow = modify_workflow(workflow, args.lora, prompt)
     
     # Initialize ComfyUI client
     client = ComfyUIClient(args.server)
