@@ -530,7 +530,7 @@ def upload_to_huggingface(file_path: str, repo_id: str, hf_path: str, token: str
 def main():
     parser = argparse.ArgumentParser(description="Submit ComfyUI workflow and upload results to Hugging Face")
     parser.add_argument("--lora", required=True, help="LoRA name to use in the workflow")
-    parser.add_argument("--workflow", default="wand_trained_lora_eval_infer-api.json", 
+    parser.add_argument("--workflow", default="wand_trained_lora_eval_infer_v2-api.json", 
                        help="Path to workflow JSON file")
     parser.add_argument("--server", default="localhost:8081", 
                        help="ComfyUI server address")
