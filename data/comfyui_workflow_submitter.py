@@ -81,14 +81,34 @@ class ComfyUIClient:
     def submit_workflow(self, workflow: Dict[str, Any]) -> str:
         """Submit workflow to ComfyUI and return prompt_id"""
         try:
+            payload = {
+                "prompt": workflow,
+                "client_id": self.client_id
+            }
+            
+            print(f"Submitting workflow to {self.base_url}/prompt...")
+            print(f"Workflow has {len(workflow)} nodes")
+            
             response = requests.post(
                 f"{self.base_url}/prompt",
-                json={
-                    "prompt": workflow,
-                    "client_id": self.client_id
-                },
+                json=payload,
                 timeout=30
             )
+            
+            # Print response details for debugging
+            print(f"Response status code: {response.status_code}")
+            
+            if response.status_code != 200:
+                print(f"Error response content: {response.text}")
+                try:
+                    error_json = response.json()
+                    if 'error' in error_json:
+                        print(f"ComfyUI error details: {error_json['error']}")
+                    if 'node_errors' in error_json:
+                        print(f"Node errors: {error_json['node_errors']}")
+                except:
+                    pass
+            
             response.raise_for_status()
             result = response.json()
             prompt_id = result['prompt_id']
@@ -97,6 +117,15 @@ class ComfyUIClient:
             
         except requests.exceptions.RequestException as e:
             print(f"Error submitting workflow: {e}")
+            print(f"Server address: {self.server_address}")
+            print(f"Base URL: {self.base_url}")
+            
+            # Print workflow summary for debugging
+            print("\nWorkflow summary:")
+            for node_id, node_data in workflow.items():
+                class_type = node_data.get('class_type', 'Unknown')
+                print(f"  Node {node_id}: {class_type}")
+            
             raise
 
     def wait_for_completion(self, prompt_id: str, timeout: int = 300) -> bool:
@@ -138,42 +167,68 @@ class ComfyUIClient:
         
         # Look for output files in the execution data
         for node_id, node_data in execution_data.get('outputs', {}).items():
+            # Check for both 'videos' and 'gifs' (ComfyUI sometimes uses 'gifs' for video files)
+            output_files = []
             if 'videos' in node_data:
-                videos = node_data['videos']
-                if videos:
-                    video_info = videos[0]  # Take the first video
-                    filename = video_info['filename']
-                    subfolder = video_info.get('subfolder', '')
+                output_files = node_data['videos']
+            elif 'gifs' in node_data:
+                output_files = node_data['gifs']
+            
+            if output_files:
+                file_info = output_files[0]  # Take the first file
+                filename = file_info['filename']
+                
+                # Check if fullpath is available (direct file access)
+                if 'fullpath' in file_info:
+                    fullpath = file_info['fullpath']
+                    print(f"Found result file at: {fullpath}")
                     
-                    # Download the file
-                    download_url = f"{self.base_url}/view"
-                    params = {
-                        'filename': filename,
-                        'subfolder': subfolder,
-                        'type': 'output'
-                    }
+                    # Create output directory
+                    os.makedirs(output_dir, exist_ok=True)
                     
+                    # Copy file from fullpath to output directory
+                    output_path = os.path.join(output_dir, filename)
                     try:
-                        response = requests.get(download_url, params=params, stream=True)
-                        response.raise_for_status()
-                        
-                        # Create output directory
-                        os.makedirs(output_dir, exist_ok=True)
-                        
-                        # Save file
-                        output_path = os.path.join(output_dir, filename)
-                        with open(output_path, 'wb') as f:
-                            for chunk in response.iter_content(chunk_size=8192):
-                                f.write(chunk)
-                                
-                        print(f"Downloaded result to: {output_path}")
+                        import shutil
+                        shutil.copy2(fullpath, output_path)
+                        print(f"Copied result to: {output_path}")
                         return output_path
+                    except Exception as e:
+                        print(f"Error copying file from {fullpath}: {e}")
+                        # Fall back to download method
+                        pass
+                
+                # Fallback: Download via ComfyUI API
+                subfolder = file_info.get('subfolder', '')
+                download_url = f"{self.base_url}/view"
+                params = {
+                    'filename': filename,
+                    'subfolder': subfolder,
+                    'type': 'output'
+                }
+                
+                try:
+                    print(f"Downloading via API: {filename}")
+                    response = requests.get(download_url, params=params, stream=True)
+                    response.raise_for_status()
+                    
+                    # Create output directory
+                    os.makedirs(output_dir, exist_ok=True)
+                    
+                    # Save file
+                    output_path = os.path.join(output_dir, filename)
+                    with open(output_path, 'wb') as f:
+                        for chunk in response.iter_content(chunk_size=8192):
+                            f.write(chunk)
+                            
+                    print(f"Downloaded result to: {output_path}")
+                    return output_path
+                    
+                except requests.exceptions.RequestException as e:
+                    print(f"Error downloading file: {e}")
+                    return None
                         
-                    except requests.exceptions.RequestException as e:
-                        print(f"Error downloading file: {e}")
-                        return None
-                        
-        print("No video output found in execution results")
+        print("No video/gif output found in execution results")
         return None
 
     def close(self):
@@ -211,6 +266,62 @@ def load_prompt_from_file(prompt_file_path: str) -> str:
     except Exception as e:
         print(f"Error loading prompt file: {e}")
         sys.exit(1)
+
+
+def validate_workflow(workflow: Dict[str, Any]) -> bool:
+    """Validate workflow structure before submitting"""
+    print("Validating workflow...")
+    
+    if not isinstance(workflow, dict):
+        print("Error: Workflow must be a dictionary")
+        return False
+    
+    if len(workflow) == 0:
+        print("Error: Workflow is empty")
+        return False
+    
+    # Check for required nodes
+    required_nodes = ["11", "16", "22", "27", "28", "30", "37", "38", "39", "56"]
+    missing_nodes = []
+    
+    for node_id in required_nodes:
+        if node_id not in workflow:
+            missing_nodes.append(node_id)
+    
+    if missing_nodes:
+        print(f"Warning: Missing expected nodes: {missing_nodes}")
+    
+    # Validate each node structure
+    for node_id, node_data in workflow.items():
+        if not isinstance(node_data, dict):
+            print(f"Error: Node {node_id} must be a dictionary")
+            return False
+        
+        if 'class_type' not in node_data:
+            print(f"Error: Node {node_id} missing 'class_type'")
+            return False
+        
+        if 'inputs' not in node_data:
+            print(f"Error: Node {node_id} missing 'inputs'")
+            return False
+        
+        if not isinstance(node_data['inputs'], dict):
+            print(f"Error: Node {node_id} 'inputs' must be a dictionary")
+            return False
+    
+    # Check specific node configurations
+    if "56" in workflow:
+        lora_input = workflow["56"]["inputs"].get("lora")
+        if not lora_input:
+            print("Warning: Node 56 (LoRA) has empty lora input")
+    
+    if "16" in workflow:
+        prompt_input = workflow["16"]["inputs"].get("positive_prompt")
+        if not prompt_input:
+            print("Warning: Node 16 (Text Encode) has empty positive_prompt")
+    
+    print("Workflow validation completed")
+    return True
 
 
 def modify_workflow(workflow: Dict[str, Any], lora_name: str, prompt: str = None) -> Dict[str, Any]:
@@ -298,6 +409,8 @@ def main():
                        help="Path to text file containing the custom prompt to use in the workflow (node #16)")
     parser.add_argument("--postfix", 
                        help="Postfix to add to the uploaded filename")
+    parser.add_argument("--debug", action="store_true",
+                       help="Save the final workflow JSON for debugging")
     
     args = parser.parse_args()
     
@@ -312,6 +425,18 @@ def main():
     # Load and modify workflow
     workflow = load_workflow(args.workflow)
     workflow = modify_workflow(workflow, args.lora, prompt)
+    
+    # Validate workflow before submitting
+    if not validate_workflow(workflow):
+        print("Workflow validation failed. Aborting.")
+        sys.exit(1)
+    
+    # Save workflow for debugging if requested
+    if args.debug:
+        debug_filename = f"debug_workflow_{int(time.time())}.json"
+        with open(debug_filename, 'w') as f:
+            json.dump(workflow, f, indent=2)
+        print(f"Debug: Saved final workflow to {debug_filename}")
     
     # Initialize ComfyUI client
     client = ComfyUIClient(args.server)
