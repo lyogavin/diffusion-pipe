@@ -5,7 +5,7 @@
 output_dir = '/root/data/diffusion_pipe_training_runs/wan_video'
 # and this
 #dataset = '/home/anon/code/diffusion-pipe-configs/datasets/wan/video.toml'
-dataset = 'examples/godmodai_dataset_jump.toml'
+dataset = 'examples/godmodai_dataset_kick.toml'
 
 # training settings
 epochs = 1000
