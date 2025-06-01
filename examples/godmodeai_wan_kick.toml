@@ -8,7 +8,7 @@ output_dir = '/root/data/diffusion_pipe_training_runs/wan_video'
 dataset = 'examples/godmodai_dataset_kick.toml'
 
 # training settings
-epochs = 1000
+epochs = 450
 micro_batch_size_per_gpu = 1
 pipeline_stages = 1
 gradient_accumulation_steps = 1
