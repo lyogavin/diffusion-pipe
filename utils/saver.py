@@ -99,7 +99,7 @@ class Saver:
                         api.upload_folder(
                             folder_path=str(save_dir),
                             repo_id=self.config['huggingface_repo'],
-                            path_in_repo=name,
+                            path_in_repo=f"epoch_{epoch}",
                             repo_type="model"
                         )
                         
