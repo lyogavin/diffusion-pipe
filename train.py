@@ -746,7 +746,7 @@ if __name__ == '__main__':
     if not checkpointed:
         saver.save_checkpoint(step)
     if not saved:
-        saver.save_model(f'epoch{epoch}')
+        saver.save_model(f'epoch{epoch}', epoch)
 
     if is_main_process():
         print('TRAINING COMPLETE!')

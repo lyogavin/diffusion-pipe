@@ -7,6 +7,7 @@ import sys
 import torch
 from deepspeed import comm as dist
 from deepspeed.utils.logging import logger
+from huggingface_hub import HfApi
 
 from utils.common import is_main_process
 
@@ -55,7 +56,7 @@ class Saver:
         self.model_engine = model_engine
         self.pipeline_model = pipeline_model
 
-    def save_adapter(self, name):
+    def save_adapter(self, name, epoch=None):
         dp_id = self.model_engine.grid.get_data_parallel_rank()
         stage_id = self.model_engine.grid.get_pipe_parallel_rank()
         save_dir = self.save_root / name
@@ -83,8 +84,37 @@ class Saver:
             self.model.save_adapter(save_dir, state_dict)
             shutil.copy(self.args.config, save_dir)
             shutil.rmtree(tmp_dir)
+            
+            # Upload to Hugging Face if configured and epoch condition is met
+            if 'huggingface_repo' in self.config and self.config['huggingface_repo']:
+                upload_hf_from_epoch = self.config.get('upload_hf_from_epoch', 0)
+                should_upload = epoch is None or epoch >= upload_hf_from_epoch
+                
+                if should_upload:
+                    try:
+                        if is_main_process():
+                            print(f"Uploading adapter '{name}' to Hugging Face repo: {self.config['huggingface_repo']}")
+                        
+                        api = HfApi()
+                        api.upload_folder(
+                            folder_path=str(save_dir),
+                            repo_id=self.config['huggingface_repo'],
+                            path_in_repo=name,
+                            repo_type="model"
+                        )
+                        
+                        if is_main_process():
+                            print(f"Successfully uploaded adapter '{name}' to Hugging Face")
+                            
+                    except Exception as e:
+                        if is_main_process():
+                            logger.error(f"Failed to upload adapter to Hugging Face: {str(e)}")
+                            print(f"Warning: Failed to upload to Hugging Face: {str(e)}")
+                else:
+                    if is_main_process():
+                        print(f"Skipping Hugging Face upload for epoch {epoch} (upload_hf_from_epoch={upload_hf_from_epoch})")
 
-    def save_full_model(self, name, max_shard_size='5GB'):
+    def save_full_model(self, name, epoch=None, max_shard_size='5GB'):
         dp_id = self.model_engine.grid.get_data_parallel_rank()
         stage_id = self.model_engine.grid.get_pipe_parallel_rank()
         save_dir = self.save_root / name
@@ -107,13 +137,13 @@ class Saver:
             shutil.copy(self.args.config, save_dir)
             shutil.rmtree(tmp_dir)
 
-    def save_model(self, name):
+    def save_model(self, name, epoch=None):
         if is_main_process():
             print(f'Saving model to directory {name}')
         if self.is_adapter:
-            self.save_adapter(name)
+            self.save_adapter(name, epoch)
         else:
-            self.save_full_model(name)
+            self.save_full_model(name, epoch)
 
     def save_checkpoint(self, step):
         self.model_engine.save_checkpoint(
@@ -133,7 +163,7 @@ class Saver:
                 self.save_checkpoint(step)
                 checkpointed = True
             if epoch % self.config['save_every_n_epochs'] == 0:
-                self.save_model(f'epoch{epoch}')
+                self.save_model(f'epoch{epoch}', epoch)
                 saved = True
             epoch = self.train_dataloader.epoch
             if epoch > self.config['epochs']:
@@ -162,7 +192,7 @@ class Saver:
 
         # TODO: support save_every_n_steps in addition to save_every_n_epochs. Maybe only one should be set?
         # if step % self.config['save_every_n_steps'] == 0 or should_manually_save:
-        #     self.save_model(f'step{step}')
+        #     self.save_model(f'step{step}', None)
 
         if need_to_checkpoint(self.config) or should_manually_save:
             self.save_checkpoint(step)
