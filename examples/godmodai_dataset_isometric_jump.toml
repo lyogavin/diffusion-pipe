@@ -37,7 +37,7 @@ num_ar_buckets = 7
 # is still greater than or equal to the frame bucket length.
 # But videos are never assigned to the image frame bucket (1); if the video is very short it would just be dropped.
 # change default 33 -> 16 for gaming
-frame_buckets = [1, 17]
+frame_buckets = [1, 16]
 # If you have >24GB VRAM, or multiple GPUs and use pipeline parallelism, or lower the spatial resolution, you could maybe train with longer frame buckets
 # frame_buckets = [1, 33, 65, 97]
 
@@ -50,7 +50,7 @@ frame_buckets = [1, 17]
 [[directory]]
 # Path to directory of images/videos, and corresponding caption files. The caption files should match the media file name, but with a .txt extension.
 # A missing caption file will log a warning, but then just train using an empty caption.
-path = '/root/godmodeai_isometric_mp4/jump'
+path = '/root/godmodeai_isometric_mp4/jump_16'
 
 # You can do masked training, where the mask indicates which parts of the image to train on. The masking is done in the loss function. The mask directory should have mask
 # images with the same names (ignoring the extension) as the training images. E.g. training image 1.jpg could have mask image 1.jpg, 1.png, etc. If a training image doesn't
