@@ -5,7 +5,7 @@
 output_dir = '/root/data/diffusion_pipe_training_runs/wan_video'
 # and this
 #dataset = '/home/anon/code/diffusion-pipe-configs/datasets/wan/video.toml'
-dataset = 'examples/godmodai_dataset_isometric_jump.toml'
+dataset = 'examples/godmodai_dataset_isometric_roundhouse_kick.toml'
 
 # training settings
 epochs = 120
@@ -36,7 +36,7 @@ blocks_to_swap = 32
 upload_hf_from_epoch = 30
 
 # Your existing HF repo setting
-huggingface_repo = 'lyogavin/godmodeai_wan_isometric_jump'
+huggingface_repo = 'lyogavin/godmodeai_wan_isometric_roundhouse_kick'
 
 [model]
 type = 'wan'
@@ -63,5 +63,5 @@ stabilize = false
 enable_wandb = true
 wandb_api_key = ''
 wandb_tracker_name = 'godmodai_wan'
-wandb_run_name = 'isometric_jump'
+wandb_run_name = 'isometric_roundhouse_kick'
 
