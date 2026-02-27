@@ -51,6 +51,7 @@ parser.add_argument('--trust_cache', action='store_true', help='Load from metada
 parser.add_argument('--i_know_what_i_am_doing', action='store_true', help="Skip certain checks and overrides. You may end up using settings that won't work.")
 parser.add_argument('--master_port', type=int, default=29500, help='Master port for distributed training')
 parser.add_argument('--dump_dataset', type=Path, default=None, help='Decode cached latents and dump the dataset to this directory.')
+parser.add_argument('--no_latent_cache', action='store_true', help='Do not pre-compute and cache latents; compute them on the fly during training. Requires num_dataloader_workers=0.')
 parser = deepspeed.add_config_arguments(parser)
 args = parser.parse_args()
 
@@ -356,9 +357,11 @@ if __name__ == '__main__':
         'steps_per_print': config.get('steps_per_print', 1),
     }
     caching_batch_size = config.get('caching_batch_size', 1)
-    dataset_manager = dataset_util.DatasetManager(model, regenerate_cache=regenerate_cache, trust_cache=args.trust_cache, caching_batch_size=caching_batch_size)
+    no_latent_cache = args.no_latent_cache or config.get('no_latent_cache', False)
+    dataset_manager = dataset_util.DatasetManager(model, regenerate_cache=regenerate_cache, trust_cache=args.trust_cache, caching_batch_size=caching_batch_size, no_latent_cache=no_latent_cache)
 
     train_data = dataset_util.Dataset(dataset_config, model, skip_dataset_validation=args.i_know_what_i_am_doing)
+    train_data.no_latent_cache = no_latent_cache
     dataset_manager.register(train_data)
 
     eval_data_map = {}
@@ -372,6 +375,7 @@ if __name__ == '__main__':
         with open(config_path) as f:
             eval_dataset_config = toml.load(f)
         eval_data_map[name] = dataset_util.Dataset(eval_dataset_config, model, skip_dataset_validation=args.i_know_what_i_am_doing)
+        eval_data_map[name].no_latent_cache = no_latent_cache
         dataset_manager.register(eval_data_map[name])
 
     # For testing
@@ -707,7 +711,10 @@ if __name__ == '__main__':
     communication_data_type = config['lora']['dtype'] if 'lora' in config else config['model']['dtype']
     model_engine.communication_data_type = communication_data_type
 
-    train_dataloader = dataset_util.PipelineDataLoader(train_data, model_engine, model_engine.gradient_accumulation_steps(), model)
+    num_dataloader_workers = 0 if no_latent_cache else config.get('num_dataloader_workers', 1)
+    if no_latent_cache and config.get('num_dataloader_workers', 0) != 0 and is_main_process():
+        print('Note: num_dataloader_workers forced to 0 because --no_latent_cache is set (latents are computed on the fly in the main process).')
+    train_dataloader = dataset_util.PipelineDataLoader(train_data, model_engine, model_engine.gradient_accumulation_steps(), model, num_dataloader_workers=num_dataloader_workers)
 
     step = 1
     # make sure to do this before calling model_engine.set_dataloader(), as that method creates an iterator

@@ -216,6 +216,30 @@ class SizeBucketDataset:
             del iteration_order
 
         self.iteration_order = datasets.load_from_disk(str(iteration_order_cache_dir))
+        self._preprocess_fn = None
+        self._call_vae_fn = None
+
+    def setup_on_the_fly_latents(self, preprocess_media_file_fn, call_vae_fn):
+        """Build iteration order from metadata and store encode fns; latents will be computed in __getitem__."""
+        print(f'setting up on-the-fly latents: {self.size_bucket}')
+        self.latent_dataset = None
+        self._preprocess_fn = preprocess_media_file_fn
+        self._call_vae_fn = call_vae_fn
+
+        iteration_order_list = []
+        for idx, example in enumerate(self.metadata_dataset.select_columns(['image_spec', 'caption'])):
+            image_spec = example['image_spec']
+            captions = example['caption']
+            for i, caption in enumerate(captions):
+                iteration_order_list.append((image_spec, idx, caption, i))
+
+        shuffle_with_seed(iteration_order_list, 42)
+
+        def iteration_order_gen():
+            for image_spec, metadata_idx, caption, caption_number in iteration_order_list:
+                yield {'image_spec': image_spec, 'metadata_idx': metadata_idx, 'caption': caption, 'caption_number': caption_number}
+
+        self.iteration_order = datasets.Dataset.from_generator(iteration_order_gen, keep_in_memory=True)
 
     def cache_text_embeddings(self, map_fn, i, regenerate_cache=False, caching_batch_size=1):
         print(f'caching text embeddings: {self.size_bucket}')
@@ -229,7 +253,35 @@ class SizeBucketDataset:
         idx = idx % len(self.iteration_order)
         entry = self.iteration_order[idx]
 
-        ret = self.latent_dataset[entry['latents_idx']]
+        if self.latent_dataset is not None:
+            ret = self.latent_dataset[entry['latents_idx']]
+        else:
+            # On-the-fly latent computation (no_latent_cache)
+            meta = self.metadata_dataset[entry['metadata_idx']]
+            image_spec = meta['image_spec']
+            mask_path = meta['mask_file']
+            size_bucket = meta['size_bucket']
+            control_file = meta.get('control_file')
+            control_path = control_file[0] if isinstance(control_file, (list, tuple)) and len(control_file) else control_file
+            is_edit = control_path is not None
+            items = self._preprocess_fn(image_spec, mask_path, size_bucket)
+            if len(items) == 0:
+                raise RuntimeError(f'preprocess_media_file_fn returned no items for {image_spec}')
+            tensor, mask = items[0][0], items[0][1]
+            tensor = tensor.unsqueeze(0)
+            if is_edit:
+                control_items = self._preprocess_fn((None, control_path), None, size_bucket)
+                assert len(control_items) == 1
+                control_tensor = control_items[0][0].unsqueeze(0)
+                control_tensor = control_tensor.to('cuda')
+                tensor = tensor.to('cuda')
+                result = self._call_vae_fn(tensor, control_tensor)
+            else:
+                tensor = tensor.to('cuda')
+                result = self._call_vae_fn(tensor)
+            ret = {k: v.squeeze(0).cpu() for k, v in result.items()}
+            ret['image_spec'] = image_spec
+            ret['mask'] = mask
 
         use_uncond = UNCOND_FRACTION > 0 and random.random() < UNCOND_FRACTION
         caption = '' if use_uncond else entry['caption']
@@ -323,6 +375,10 @@ class ARBucketDataset:
 
         for ds in self.size_buckets:
             ds.cache_latents(map_fn, regenerate_cache=regenerate_cache, trust_cache=trust_cache, caching_batch_size=caching_batch_size)
+
+    def setup_on_the_fly_latents(self, preprocess_media_file_fn, call_vae_fn):
+        for ds in self.size_buckets:
+            ds.setup_on_the_fly_latents(preprocess_media_file_fn, call_vae_fn)
 
     def cache_text_embeddings(self, map_fn, i, regenerate_cache=False, caching_batch_size=1):
         print(f'caching text embeddings: {self.ar_frames}')
@@ -762,6 +818,11 @@ class DirectoryDataset:
         for ds in datasets:
             ds.cache_latents(map_fn, regenerate_cache=regenerate_cache, trust_cache=trust_cache, caching_batch_size=caching_batch_size)
 
+    def setup_on_the_fly_latents(self, preprocess_media_file_fn, call_vae_fn):
+        datasets = self.size_bucket_datasets if self.use_size_buckets else self.ar_bucket_datasets
+        for ds in datasets:
+            ds.setup_on_the_fly_latents(preprocess_media_file_fn, call_vae_fn)
+
     def cache_text_embeddings(self, map_fn, i, regenerate_cache=False, caching_batch_size=1):
         print(f'caching text embeddings: {self.path}')
         datasets_list = self.size_bucket_datasets if self.use_size_buckets else self.ar_bucket_datasets
@@ -902,6 +963,10 @@ class Dataset:
         for ds in self.directory_datasets:
             ds.cache_latents(map_fn, regenerate_cache=regenerate_cache, trust_cache=trust_cache, caching_batch_size=caching_batch_size)
 
+    def setup_on_the_fly_latents(self, preprocess_media_file_fn, call_vae_fn):
+        for ds in self.directory_datasets:
+            ds.setup_on_the_fly_latents(preprocess_media_file_fn, call_vae_fn)
+
     def cache_text_embeddings(self, map_fn, i, regenerate_cache=False, caching_batch_size=1):
         for ds in self.directory_datasets:
             ds.cache_text_embeddings(map_fn, i, regenerate_cache=regenerate_cache, caching_batch_size=caching_batch_size)
@@ -969,7 +1034,8 @@ def _cache_fn(datasets, queue, preprocess_media_file_fn, num_text_encoders, rege
         return results
 
     for ds in datasets:
-        ds.cache_latents(latents_map_fn, regenerate_cache=regenerate_cache, trust_cache=trust_cache, caching_batch_size=caching_batch_size)
+        if not getattr(ds, 'no_latent_cache', False):
+            ds.cache_latents(latents_map_fn, regenerate_cache=regenerate_cache, trust_cache=trust_cache, caching_batch_size=caching_batch_size)
 
     for text_encoder_idx in range(num_text_encoders):
         def text_embedding_map_fn(example, rank):
@@ -988,7 +1054,7 @@ def _cache_fn(datasets, queue, preprocess_media_file_fn, num_text_encoders, rege
 # Helper class to make caching multiple datasets more efficient by moving
 # models to GPU as few times as needed.
 class DatasetManager:
-    def __init__(self, model, regenerate_cache=False, trust_cache=False, caching_batch_size=1):
+    def __init__(self, model, regenerate_cache=False, trust_cache=False, caching_batch_size=1, no_latent_cache=False):
         self.model = model
         self.vae = self.model.get_vae()
         self.text_encoders = self.model.get_text_encoders()
@@ -998,6 +1064,7 @@ class DatasetManager:
         self.regenerate_cache = regenerate_cache
         self.trust_cache = trust_cache
         self.caching_batch_size = caching_batch_size
+        self.no_latent_cache = no_latent_cache
         self.datasets = []
 
     def register(self, dataset):
@@ -1045,9 +1112,14 @@ class DatasetManager:
         if unload_models:
             # Free memory in all unneeded submodels. This is easier than trying to delete every reference.
             # TODO: check if this is actually freeing memory.
+            # When no_latent_cache, we need the VAE in the main process for on-the-fly encoding in __getitem__.
+            any_no_latent_cache = any(getattr(ds, 'no_latent_cache', False) for ds in self.datasets)
             for model in self.submodels:
                 if self.model.name == 'sdxl' and model is self.vae:
                     # If full fine tuning SDXL, we need to keep the VAE weights around for saving the model.
+                    model.to('cpu')
+                elif any_no_latent_cache and model is self.vae:
+                    # Keep VAE on CPU so it can be moved to GPU when computing latents on the fly.
                     model.to('cpu')
                 else:
                     model.to('meta')
@@ -1059,7 +1131,19 @@ class DatasetManager:
         # Now load all datasets from cache.
         for ds in self.datasets:
             ds.cache_metadata(trust_cache=True)
-            ds.cache_latents(None, trust_cache=True)
+            if getattr(ds, 'no_latent_cache', False):
+                # Wrapper that ensures VAE is on GPU when computing latents on the fly (we kept VAE on CPU above).
+                def make_call_vae_fn(vae, call_vae_fn):
+                    def fn(tensor, control_tensor=None):
+                        if next(vae.parameters()).device.type != 'cuda':
+                            vae.to('cuda')
+                        if control_tensor is not None:
+                            return call_vae_fn(tensor, control_tensor)
+                        return call_vae_fn(tensor)
+                    return fn
+                ds.setup_on_the_fly_latents(self.model.get_preprocess_media_file_fn(), make_call_vae_fn(self.vae, self.call_vae_fn))
+            else:
+                ds.cache_latents(None, trust_cache=True)
             for i in range(1, len(self.text_encoders)+1):
                 ds.cache_text_embeddings(None, i)
 
