@@ -351,9 +351,13 @@ class ARBucketDataset:
     def get_size_bucket_datasets(self):
         return self.size_buckets
 
-    def cache_latents(self, map_fn, regenerate_cache=False, trust_cache=False, caching_batch_size=1):
-        print(f'caching latents: {self.ar_frames}')
-
+    def ensure_size_bucket_datasets(self, regenerate_cache=False, trust_cache=False):
+        """Create SizeBucketDataset instances (and cache metadata_with_size_bucket) without caching latents.
+        Required when no_latent_cache is set so that get_size_bucket_datasets() returns non-empty and
+        setup_on_the_fly_latents can be called on each bucket."""
+        if self.size_buckets:
+            return
+        print(f'ensuring size bucket datasets: {self.ar_frames}')
         for res in self.resolutions:
             area = res**2
             w = math.sqrt(area * self.ar_frames[0])
@@ -367,11 +371,14 @@ class ARBucketDataset:
                 load_from_cache_file=(not regenerate_cache and trust_cache),
                 desc='Adding size bucket',
             )
-            # to make sure the directory has a unique name
             naming_size_bucket = (self.ar_frames[0],) + size_bucket
             self.size_buckets.append(
                 SizeBucketDataset(metadata_with_size_bucket, self.directory_config, naming_size_bucket, self.cache_base)
             )
+
+    def cache_latents(self, map_fn, regenerate_cache=False, trust_cache=False, caching_batch_size=1):
+        print(f'caching latents: {self.ar_frames}')
+        self.ensure_size_bucket_datasets(regenerate_cache=regenerate_cache, trust_cache=trust_cache)
 
         for ds in self.size_buckets:
             ds.cache_latents(map_fn, regenerate_cache=regenerate_cache, trust_cache=trust_cache, caching_batch_size=caching_batch_size)
@@ -818,6 +825,12 @@ class DirectoryDataset:
         for ds in datasets:
             ds.cache_latents(map_fn, regenerate_cache=regenerate_cache, trust_cache=trust_cache, caching_batch_size=caching_batch_size)
 
+    def ensure_size_bucket_datasets(self, regenerate_cache=False, trust_cache=False):
+        if self.use_size_buckets:
+            return  # already populated in cache_metadata
+        for ds in self.ar_bucket_datasets:
+            ds.ensure_size_bucket_datasets(regenerate_cache=regenerate_cache, trust_cache=trust_cache)
+
     def setup_on_the_fly_latents(self, preprocess_media_file_fn, call_vae_fn):
         datasets = self.size_bucket_datasets if self.use_size_buckets else self.ar_bucket_datasets
         for ds in datasets:
@@ -963,6 +976,10 @@ class Dataset:
         for ds in self.directory_datasets:
             ds.cache_latents(map_fn, regenerate_cache=regenerate_cache, trust_cache=trust_cache, caching_batch_size=caching_batch_size)
 
+    def ensure_size_bucket_datasets(self, regenerate_cache=False, trust_cache=False):
+        for ds in self.directory_datasets:
+            ds.ensure_size_bucket_datasets(regenerate_cache=regenerate_cache, trust_cache=trust_cache)
+
     def setup_on_the_fly_latents(self, preprocess_media_file_fn, call_vae_fn):
         for ds in self.directory_datasets:
             ds.setup_on_the_fly_latents(preprocess_media_file_fn, call_vae_fn)
@@ -984,6 +1001,13 @@ def _cache_fn(datasets, queue, preprocess_media_file_fn, num_text_encoders, rege
 
     for ds in datasets:
         ds.cache_metadata(regenerate_cache=regenerate_cache, trust_cache=trust_cache)
+
+    # When no_latent_cache, we still need to create SizeBucketDatasets for AR bucket mode (they are
+    # normally created inside cache_latents). This caches metadata_with_size_bucket so the main
+    # process can load it and call setup_on_the_fly_latents.
+    for ds in datasets:
+        if getattr(ds, 'no_latent_cache', False):
+            ds.ensure_size_bucket_datasets(regenerate_cache=regenerate_cache, trust_cache=trust_cache)
 
     pipes = {}
 
@@ -1132,6 +1156,9 @@ class DatasetManager:
         for ds in self.datasets:
             ds.cache_metadata(trust_cache=True)
             if getattr(ds, 'no_latent_cache', False):
+                # In AR bucket mode, size_buckets are created in cache_latents; ensure they exist so
+                # we can call setup_on_the_fly_latents (loads metadata_with_size_bucket from cache).
+                ds.ensure_size_bucket_datasets(trust_cache=True)
                 # Wrapper that ensures VAE is on GPU when computing latents on the fly (we kept VAE on CPU above).
                 def make_call_vae_fn(vae, call_vae_fn):
                     def fn(tensor, control_tensor=None):
