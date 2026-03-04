@@ -250,47 +250,65 @@ class SizeBucketDataset:
         self.text_embedding_datasets.append(te_dataset)
 
     def __getitem__(self, idx):
-        idx = idx % len(self.iteration_order)
-        entry = self.iteration_order[idx]
+        # Make dataset robust to individual media / preprocessing failures by skipping bad
+        # examples instead of raising and terminating training.
+        num_entries = len(self.iteration_order)
+        start_idx = idx % num_entries
 
-        if self.latent_dataset is not None:
-            ret = self.latent_dataset[entry['latents_idx']]
-        else:
-            # On-the-fly latent computation (no_latent_cache)
-            meta = self.metadata_dataset[entry['metadata_idx']]
-            image_spec = meta['image_spec']
-            mask_path = meta['mask_file']
-            size_bucket = meta['size_bucket']
-            control_file = meta.get('control_file')
-            control_path = control_file[0] if isinstance(control_file, (list, tuple)) and len(control_file) else control_file
-            is_edit = control_path is not None
-            items = self._preprocess_fn(image_spec, mask_path, size_bucket)
-            if len(items) == 0:
-                raise RuntimeError(f'preprocess_media_file_fn returned no items for {image_spec}')
-            tensor, mask = items[0][0], items[0][1]
-            tensor = tensor.unsqueeze(0)
-            if is_edit:
-                control_items = self._preprocess_fn((None, control_path), None, size_bucket)
-                assert len(control_items) == 1
-                control_tensor = control_items[0][0].unsqueeze(0)
-                control_tensor = control_tensor.to('cuda')
-                tensor = tensor.to('cuda')
-                result = self._call_vae_fn(tensor, control_tensor)
-            else:
-                tensor = tensor.to('cuda')
-                result = self._call_vae_fn(tensor)
-            ret = {k: v.squeeze(0).cpu() for k, v in result.items()}
-            ret['image_spec'] = image_spec
-            ret['mask'] = mask
+        for attempt in range(num_entries):
+            current_idx = (start_idx + attempt) % num_entries
+            entry = self.iteration_order[current_idx]
 
-        use_uncond = UNCOND_FRACTION > 0 and random.random() < UNCOND_FRACTION
-        caption = '' if use_uncond else entry['caption']
+            try:
+                if self.latent_dataset is not None:
+                    ret = self.latent_dataset[entry['latents_idx']]
+                else:
+                    # On-the-fly latent computation (no_latent_cache)
+                    meta = self.metadata_dataset[entry['metadata_idx']]
+                    image_spec = meta['image_spec']
+                    mask_path = meta['mask_file']
+                    size_bucket = meta['size_bucket']
+                    control_file = meta.get('control_file')
+                    control_path = control_file[0] if isinstance(control_file, (list, tuple)) and len(control_file) else control_file
+                    is_edit = control_path is not None
 
-        for ds, uncond_ds in zip(self.text_embedding_datasets, self.uncond_text_embeddings):
-            emb_dict = uncond_ds[0] if use_uncond else ds.get_text_embeddings(tuple(entry['image_spec']), entry['caption_number'])
-            ret.update(emb_dict)
-        ret['caption'] = caption
-        return ret
+                    items = self._preprocess_fn(image_spec, mask_path, size_bucket)
+                    if not items:
+                        raise RuntimeError(f'preprocess_media_file_fn returned no items for {image_spec}')
+
+                    tensor, mask = items[0][0], items[0][1]
+                    tensor = tensor.unsqueeze(0)
+                    if is_edit:
+                        control_items = self._preprocess_fn((None, control_path), None, size_bucket)
+                        if not control_items:
+                            raise RuntimeError(f'preprocess_media_file_fn returned no control items for {control_path}')
+                        control_tensor = control_items[0][0].unsqueeze(0)
+                        control_tensor = control_tensor.to('cuda')
+                        tensor = tensor.to('cuda')
+                        result = self._call_vae_fn(tensor, control_tensor)
+                    else:
+                        tensor = tensor.to('cuda')
+                        result = self._call_vae_fn(tensor)
+                    ret = {k: v.squeeze(0).cpu() for k, v in result.items()}
+                    ret['image_spec'] = image_spec
+                    ret['mask'] = mask
+
+                use_uncond = UNCOND_FRACTION > 0 and random.random() < UNCOND_FRACTION
+                caption = '' if use_uncond else entry['caption']
+
+                for ds, uncond_ds in zip(self.text_embedding_datasets, self.uncond_text_embeddings):
+                    emb_dict = uncond_ds[0] if use_uncond else ds.get_text_embeddings(tuple(entry['image_spec']), entry['caption_number'])
+                    ret.update(emb_dict)
+                ret['caption'] = caption
+                return ret
+            except Exception as e:
+                # Log and try the next entry. Only the main process logs to avoid spam.
+                if is_main_process():
+                    logger.warning(f'Error while loading example in SizeBucketDataset {self.size_bucket}: {e}. Skipping this example.')
+                continue
+
+        # If we get here, every example in this size bucket failed.
+        raise RuntimeError(f'All examples in SizeBucketDataset {self.size_bucket} failed during loading.')
 
     def __len__(self):
         return int(len(self.iteration_order) * self.num_repeats)
